@@ -1,0 +1,6 @@
+{
+  "name": "PartOut",
+  "description": "Identify parts from photos, estimate used value, and track salvaged items in vehicle part-out sessions with Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
