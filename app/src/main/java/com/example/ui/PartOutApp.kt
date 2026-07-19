@@ -102,6 +102,10 @@ fun PartOutApp(
     // Clipboard notification
     var clipboardToastText by remember { mutableStateOf<String?>(null) }
 
+    // API key entry dialog
+    val showApiKeyDialog by viewModel.showApiKeyDialog.collectAsState()
+    val userApiKey by viewModel.userApiKey.collectAsState()
+
     // Handle temporary custom toast on screen
     LaunchedEffect(clipboardToastText) {
         if (clipboardToastText != null) {
@@ -123,6 +127,19 @@ fun PartOutApp(
                     onClick = { viewModel.selectTab(PartOutTab.SCAN) },
                     icon = { Icon(Icons.Default.PhotoCamera, contentDescription = "Scan tab") },
                     label = { Text("Scan", fontWeight = FontWeight.Bold) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = PartOutPrimary,
+                        selectedTextColor = PartOutPrimary,
+                        unselectedIconColor = PartOutTextSecondary,
+                        unselectedTextColor = PartOutTextSecondary,
+                        indicatorColor = PartOutSurface
+                    )
+                )
+                NavigationBarItem(
+                    selected = currentTab == PartOutTab.MECHANIC,
+                    onClick = { viewModel.selectTab(PartOutTab.MECHANIC) },
+                    icon = { Icon(Icons.Default.Handyman, contentDescription = "Mechanic tab") },
+                    label = { Text("Mechanic", fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = PartOutPrimary,
                         selectedTextColor = PartOutPrimary,
@@ -196,6 +213,9 @@ fun PartOutApp(
                         }
                     }
                 }
+                PartOutTab.MECHANIC -> {
+                    MechanicScreen(viewModel = viewModel)
+                }
                 PartOutTab.GARAGE_LOGS -> {
                     GarageLogsTabScreen(
                         historyList = historyList,
@@ -258,6 +278,113 @@ fun PartOutApp(
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+                }
+            }
+
+            if (showApiKeyDialog) {
+                ApiKeyDialog(
+                    currentKey = userApiKey,
+                    onSave = { viewModel.saveApiKey(it) },
+                    onDismiss = { viewModel.dismissApiKeyDialog() }
+                )
+            }
+        }
+    }
+}
+
+// ==========================================
+// API KEY DIALOG
+// ==========================================
+
+@Composable
+fun ApiKeyDialog(
+    currentKey: String,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var keyText by remember(currentKey) { mutableStateOf(currentKey) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = PartOutSurface),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, PartOutBorder, RoundedCornerShape(16.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Key, contentDescription = "API Key", tint = PartOutPrimary)
+                    Text(
+                        text = "Gemini API Key",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                Text(
+                    text = "The AI features need a free Google Gemini API key. Get one in about a minute at aistudio.google.com/apikey, then paste it below. It's stored only on this device.",
+                    color = PartOutTextSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+
+                OutlinedTextField(
+                    value = keyText,
+                    onValueChange = { keyText = it },
+                    label = { Text("API Key", color = PartOutTextSecondary) },
+                    placeholder = { Text("AIza…", color = PartOutTextSecondary.copy(alpha = 0.5f)) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = PartOutPrimary,
+                        unfocusedBorderColor = PartOutBorder,
+                        focusedContainerColor = NeutralDark,
+                        unfocusedContainerColor = NeutralDark
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    textStyle = TextStyle(fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("api_key_input")
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        border = BorderStroke(1.dp, PartOutBorder),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
+                    ) {
+                        Text("Cancel", fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = { onSave(keyText) },
+                        enabled = keyText.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = PartOutPrimary),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
+                            .testTag("api_key_save_button")
+                    ) {
+                        Text("Save Key", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -465,6 +592,24 @@ fun CaptureScreen(
                         }
                     }
                 }
+            }
+
+            // API Key settings shortcut
+            IconButton(
+                onClick = { viewModel.openApiKeyDialog() },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 12.dp, end = 12.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
+                    .border(1.dp, PartOutBorder, CircleShape)
+                    .size(40.dp)
+            ) {
+                Icon(
+                    Icons.Default.Key,
+                    contentDescription = "API Key Settings",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
             // Floating Active Session Chip Overlay
@@ -687,8 +832,16 @@ fun CameraXViewfinder(
                 ContextCompat.getMainExecutor(context),
                 object : ImageCapture.OnImageCapturedCallback() {
                     override fun onCaptureSuccess(image: ImageProxy) {
-                        val bitmap = image.toBitmap()
+                        val rotationDegrees = image.imageInfo.rotationDegrees
+                        val raw = image.toBitmap()
                         image.close()
+                        // Apply the sensor rotation so the photo isn't sideways
+                        val bitmap = if (rotationDegrees != 0) {
+                            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                            Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true)
+                        } else {
+                            raw
+                        }
                         if (bitmap != null) {
                             onPhotoCaptured(bitmap)
                         } else {
@@ -1490,6 +1643,20 @@ fun ResultsScreen(
                 ) {
                     Icon(Icons.Default.Build, contentDescription = "Pull Guide icon", modifier = Modifier.padding(end = 8.dp), tint = Color.White)
                     Text("Pull Guide — how to remove this part", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
+                }
+
+                Button(
+                    onClick = { viewModel.askMechanicAboutActivePart() },
+                    colors = ButtonDefaults.buttonColors(containerColor = PartOutSurface),
+                    border = BorderStroke(1.dp, PartOutPrimary),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .testTag("ask_mechanic_button")
+                ) {
+                    Icon(Icons.Default.Handyman, contentDescription = "Ask AI Mechanic icon", modifier = Modifier.padding(end = 8.dp), tint = PartOutPrimary)
+                    Text("Ask AI Mechanic — repair help", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
                 }
 
                 Button(
@@ -2491,7 +2658,7 @@ fun GarageLogsTabScreen(
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                text = "In-memory scans recorded during this active session. Clears when the app is closed.",
+                text = "Every part you've scanned, saved on this device. Tap one to reopen its specs, listing, and pull guide.",
                 color = PartOutTextSecondary,
                 fontSize = 13.sp,
                 lineHeight = 17.sp
