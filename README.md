@@ -10,7 +10,22 @@ Point your camera at a car part and let AI do the rest.
 - **Garage Logs** — every scan is saved on-device, so your history survives app restarts.
 - **Part-Outs** — track a salvage vehicle's pull list, listing status, and total estimated payout.
 
-## Run it
+## 📱 Use it on your phone right now (no Android Studio needed)
+
+PartOut also ships as a web app (PWA) in [`web/`](web/), auto-deployed to GitHub Pages:
+
+**https://fabianb14.github.io/PartOut/**
+
+Open that URL on any phone or tablet and install it like an app:
+
+- **Android (Chrome):** tap the **Install** button in the app header, or Chrome menu ⋮ → *Add to Home screen* → *Install*.
+- **iPhone / iPad (Safari):** tap **Share** → **Add to Home Screen**.
+
+It launches full-screen from your home screen like a native app, keeps your scan history and chat on-device, and works with the same free Gemini API key (it asks on first launch).
+
+> First-time setup: GitHub Pages must be enabled once — the included workflow (`.github/workflows/pages.yml`) does this automatically on push. If the site 404s, check the repo's **Actions** tab for the "Deploy PWA to GitHub Pages" run, and make sure **Settings → Pages → Source** is set to *GitHub Actions*.
+
+## Run the native Android app
 
 **Prerequisites:** [Android Studio](https://developer.android.com/studio)
 

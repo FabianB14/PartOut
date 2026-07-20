@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>PartOut — AI Part Scanner &amp; Mechanic</title>
+  <meta name="description" content="Identify car parts from photos, estimate value, and get AI repair help for your vehicle.">
+  <meta name="theme-color" content="#0D0F12">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PartOut">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">
+        <span class="brand-mark">P</span>
+        <div>
+          <div class="brand-kicker">GARAGE TOOLKIT</div>
+          <div class="brand-name">PartOut</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="install-btn" class="pill-btn hidden" type="button">⤓ Install</button>
+        <button id="key-btn" class="icon-btn" type="button" title="Gemini API key" aria-label="API key settings">🔑</button>
+      </div>
+    </header>
+
+    <div id="ios-hint" class="ios-hint hidden">
+      To install on iPhone/iPad: tap <strong>Share</strong> <span class="share-glyph">&#x2BAD;</span> then <strong>“Add to Home Screen”.</strong>
+      <button id="ios-hint-close" class="ios-hint-close" type="button" aria-label="Dismiss">✕</button>
+    </div>
+
+    <main id="view"></main>
+
+    <nav id="tabs">
+      <button class="tab" data-tab="scan" type="button"><span class="tab-icon">📷</span>Scan</button>
+      <button class="tab" data-tab="mechanic" type="button"><span class="tab-icon">🔧</span>Mechanic</button>
+      <button class="tab" data-tab="garage" type="button"><span class="tab-icon">🗂️</span>Garage</button>
+    </nav>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
