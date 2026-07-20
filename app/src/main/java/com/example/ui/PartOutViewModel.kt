@@ -1,19 +1,29 @@
 package com.example.ui
 
+import android.app.Application
 import android.graphics.Bitmap
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
 import com.example.api.RetrofitClient
-import com.example.data.PartScanResponse
-import com.example.data.ScanHistoryItem
+import com.example.data.MechanicMessage
+import com.example.data.PartOutRepository
 import com.example.data.PartOutSession
+import com.example.data.PersistedChatMessage
+import com.example.data.PersistedScan
+import com.example.data.PersistedState
+import com.example.data.ScanHistoryItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 // Screens in the application
@@ -28,11 +38,15 @@ enum class PartOutScreen {
 // Bottom Navigation Tabs
 enum class PartOutTab {
     SCAN,
+    MECHANIC,
     GARAGE_LOGS,
     PART_OUTS
 }
 
-class PartOutViewModel : ViewModel() {
+class PartOutViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository = PartOutRepository(application)
+    private val persistMutex = Mutex()
 
     // --- State Declarations ---
 
@@ -42,11 +56,11 @@ class PartOutViewModel : ViewModel() {
     private val _currentScreen = MutableStateFlow(PartOutScreen.CAPTURE)
     val currentScreen: StateFlow<PartOutScreen> = _currentScreen.asStateFlow()
 
-    // Scanned parts history (in-memory, lost on restart)
+    // Scanned parts history (persisted to disk)
     private val _scanHistory = MutableStateFlow<List<ScanHistoryItem>>(emptyList())
     val scanHistory: StateFlow<List<ScanHistoryItem>> = _scanHistory.asStateFlow()
 
-    // Part-Out Sessions (in-memory)
+    // Part-Out Sessions (persisted to disk)
     private val _partOutSessions = MutableStateFlow<List<PartOutSession>>(emptyList())
     val partOutSessions: StateFlow<List<PartOutSession>> = _partOutSessions.asStateFlow()
 
@@ -76,8 +90,8 @@ class PartOutViewModel : ViewModel() {
     val analysisStatus: StateFlow<String> = _analysisStatus.asStateFlow()
 
     // Active Results
-    private val _activeResponse = MutableStateFlow<PartScanResponse?>(null)
-    val activeResponse: StateFlow<PartScanResponse?> = _activeResponse.asStateFlow()
+    private val _activeResponse = MutableStateFlow<com.example.data.PartScanResponse?>(null)
+    val activeResponse: StateFlow<com.example.data.PartScanResponse?> = _activeResponse.asStateFlow()
 
     // Reference to the active history item being viewed or edited
     private val _activeHistoryItem = MutableStateFlow<ScanHistoryItem?>(null)
@@ -90,6 +104,29 @@ class PartOutViewModel : ViewModel() {
     // Error states
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // API key management
+    private val _userApiKey = MutableStateFlow("")
+    val userApiKey: StateFlow<String> = _userApiKey.asStateFlow()
+
+    private val _showApiKeyDialog = MutableStateFlow(false)
+    val showApiKeyDialog: StateFlow<Boolean> = _showApiKeyDialog.asStateFlow()
+
+    // AI Mechanic chat states
+    private val _mechanicMessages = MutableStateFlow<List<MechanicMessage>>(emptyList())
+    val mechanicMessages: StateFlow<List<MechanicMessage>> = _mechanicMessages.asStateFlow()
+
+    private val _mechanicInput = MutableStateFlow("")
+    val mechanicInput: StateFlow<String> = _mechanicInput.asStateFlow()
+
+    private val _mechanicSending = MutableStateFlow(false)
+    val mechanicSending: StateFlow<Boolean> = _mechanicSending.asStateFlow()
+
+    private val _mechanicAttachment = MutableStateFlow<Bitmap?>(null)
+    val mechanicAttachment: StateFlow<Bitmap?> = _mechanicAttachment.asStateFlow()
+
+    private val _mechanicVehicle = MutableStateFlow("")
+    val mechanicVehicle: StateFlow<String> = _mechanicVehicle.asStateFlow()
 
     // Pull Guide states
     private val _pullGuideLoading = MutableStateFlow(false)
@@ -115,6 +152,132 @@ class PartOutViewModel : ViewModel() {
     val editedConditionNotes: StateFlow<String> = _editedConditionNotes.asStateFlow()
 
     private var statusRotationJob: Job? = null
+
+    init {
+        _userApiKey.value = repository.apiKey
+        _mechanicVehicle.value = repository.mechanicVehicle
+
+        // Restore persisted scans, sessions, and chat from disk.
+        viewModelScope.launch(Dispatchers.IO) {
+            val state = repository.loadState()
+            val restoredScans = state.scans.map { p ->
+                ScanHistoryItem(
+                    id = p.id,
+                    timestamp = p.timestamp,
+                    bitmap = repository.loadImage(p.imagePath),
+                    imagePath = p.imagePath,
+                    response = p.response,
+                    userContext = p.userContext,
+                    editedPrice = p.editedPrice,
+                    editedTitle = p.editedTitle,
+                    editedDescription = p.editedDescription,
+                    editedConditionNotes = p.editedConditionNotes,
+                    pulled = p.pulled,
+                    listed = p.listed,
+                    sessionId = p.sessionId
+                )
+            }
+            val restoredChat = state.chat.map { c ->
+                MechanicMessage(
+                    id = c.id,
+                    role = c.role,
+                    text = c.text,
+                    bitmap = repository.loadImage(c.imagePath),
+                    imagePath = c.imagePath
+                )
+            }
+            _scanHistory.update { current -> restoredScans + current.filter { c -> restoredScans.none { it.id == c.id } } }
+            _partOutSessions.update { current -> state.sessions + current.filter { c -> state.sessions.none { it.id == c.id } } }
+            _mechanicMessages.update { current -> restoredChat + current }
+            state.activeSessionId?.let { id ->
+                val session = state.sessions.find { it.id == id }
+                if (session != null && _activeSessionId.value == null) {
+                    _activeSessionId.value = session.id
+                    _activeSession.value = session
+                }
+            }
+        }
+    }
+
+    // --- API key handling ---
+
+    // Resolves the key to use: one entered in-app wins, otherwise a key
+    // baked in at build time via .env, otherwise null (prompts the dialog).
+    private fun effectiveApiKey(): String? {
+        val stored = _userApiKey.value
+        if (stored.isNotBlank()) return stored
+        val builtIn = BuildConfig.GEMINI_API_KEY
+        if (builtIn.isNotBlank() && builtIn != "MY_GEMINI_API_KEY") return builtIn
+        return null
+    }
+
+    fun hasUsableApiKey(): Boolean = effectiveApiKey() != null
+
+    fun openApiKeyDialog() {
+        _showApiKeyDialog.value = true
+    }
+
+    fun dismissApiKeyDialog() {
+        _showApiKeyDialog.value = false
+    }
+
+    fun saveApiKey(key: String) {
+        val trimmed = key.trim()
+        _userApiKey.value = trimmed
+        repository.apiKey = trimmed
+        _showApiKeyDialog.value = false
+    }
+
+    // --- Persistence ---
+
+    private fun ScanHistoryItem.toPersisted() = PersistedScan(
+        id = id,
+        timestamp = timestamp,
+        imagePath = imagePath,
+        response = response,
+        userContext = userContext,
+        editedPrice = editedPrice,
+        editedTitle = editedTitle,
+        editedDescription = editedDescription,
+        editedConditionNotes = editedConditionNotes,
+        pulled = pulled,
+        listed = listed,
+        sessionId = sessionId
+    )
+
+    private fun persist() {
+        viewModelScope.launch(Dispatchers.IO) {
+            persistMutex.withLock {
+                // Write any not-yet-saved photos to disk and record their paths.
+                _scanHistory.update { list ->
+                    list.map { item ->
+                        val bitmap = item.bitmap
+                        if (bitmap != null && item.imagePath == null) {
+                            item.copy(imagePath = repository.saveImage("scan_${item.id}", bitmap))
+                        } else item
+                    }
+                }
+                _mechanicMessages.update { list ->
+                    list.map { msg ->
+                        val bitmap = msg.bitmap
+                        if (bitmap != null && msg.imagePath == null) {
+                            msg.copy(imagePath = repository.saveImage("chat_${msg.id}", bitmap))
+                        } else msg
+                    }
+                }
+                repository.saveState(
+                    PersistedState(
+                        scans = _scanHistory.value.map { it.toPersisted() },
+                        sessions = _partOutSessions.value,
+                        activeSessionId = _activeSessionId.value,
+                        chat = _mechanicMessages.value
+                            .filter { !it.isError }
+                            .map { PersistedChatMessage(it.id, it.role, it.text, it.imagePath) }
+                    )
+                )
+            }
+        }
+    }
 
     // --- Action Handlers ---
 
@@ -161,7 +324,7 @@ class PartOutViewModel : ViewModel() {
         _activeHistoryItem.value = item
         _userContext.value = item.userContext ?: ""
         _nonIdentifiedMessage.value = if (!item.response.identified) item.response.message else null
-        
+
         // Setup Screen 4 input values from history item state
         _editedPrice.value = item.editedPrice.toString()
         _editedTitle.value = item.editedTitle
@@ -184,6 +347,7 @@ class PartOutViewModel : ViewModel() {
         _partOutSessions.value = listOf(newSession) + _partOutSessions.value
         _activeSessionId.value = newSession.id
         _activeSession.value = newSession
+        persist()
     }
 
     fun selectSession(session: PartOutSession?) {
@@ -198,11 +362,13 @@ class PartOutViewModel : ViewModel() {
             _activeSessionId.value = session.id
             _activeSession.value = session
         }
+        persist()
     }
 
     fun clearActiveSession() {
         _activeSessionId.value = null
         _activeSession.value = null
+        persist()
     }
 
     fun deleteSession(sessionId: String) {
@@ -218,6 +384,7 @@ class PartOutViewModel : ViewModel() {
         _scanHistory.value = _scanHistory.value.map { item ->
             if (item.sessionId == sessionId) item.copy(sessionId = null) else item
         }
+        persist()
     }
 
     fun togglePartPulled(itemId: String) {
@@ -228,6 +395,7 @@ class PartOutViewModel : ViewModel() {
         if (_activeHistoryItem.value?.id == itemId) {
             _activeHistoryItem.value = _activeHistoryItem.value?.copy(pulled = !_activeHistoryItem.value!!.pulled)
         }
+        persist()
     }
 
     fun togglePartListed(itemId: String) {
@@ -238,17 +406,18 @@ class PartOutViewModel : ViewModel() {
         if (_activeHistoryItem.value?.id == itemId) {
             _activeHistoryItem.value = _activeHistoryItem.value?.copy(listed = !_activeHistoryItem.value!!.listed)
         }
+        persist()
     }
 
-    // Start analyzing process
+    // Generate the pull guide for the active scan
     fun loadPullGuide() {
         val bitmap = _capturedBitmap.value ?: return
         val response = _activeResponse.value ?: return
         val partName = response.partName ?: "this part"
-        val apiKey = com.example.BuildConfig.GEMINI_API_KEY
+        val apiKey = effectiveApiKey()
 
-        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
-            _pullGuideError.value = "Gemini API Key is missing. Please configure your GEMINI_API_KEY in the Secrets panel in AI Studio."
+        if (apiKey == null) {
+            _showApiKeyDialog.value = true
             return
         }
 
@@ -262,11 +431,13 @@ class PartOutViewModel : ViewModel() {
                 val vehicleContextText = _activeSession.value?.let {
                     "Vehicle: ${it.vehicleName}${if (!it.mileage.isNullOrBlank()) ", Mileage: ${it.mileage}" else ""}"
                 } ?: "Typical Vehicle"
-                val pullGuide = RetrofitClient.getPullGuide(apiKey, bitmap, partName, vehicleContextText)
+                val pullGuide = withContext(Dispatchers.IO) {
+                    RetrofitClient.getPullGuide(apiKey, bitmap, partName, vehicleContextText)
+                }
                 _activePullGuide.value = pullGuide
             } catch (e: Exception) {
                 e.printStackTrace()
-                _pullGuideError.value = "Could not generate removal steps for this part. (Error: ${e.localizedMessage})"
+                _pullGuideError.value = e.localizedMessage ?: "Could not generate removal steps for this part."
             } finally {
                 _pullGuideLoading.value = false
             }
@@ -276,11 +447,10 @@ class PartOutViewModel : ViewModel() {
     // Start analyzing process
     fun analyzeCapturedImage() {
         val bitmap = _capturedBitmap.value ?: return
-        val apiKey = BuildConfig.GEMINI_API_KEY
+        val apiKey = effectiveApiKey()
 
-        // Check for empty API key
-        if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
-            _errorMessage.value = "Gemini API Key is missing. Please configure your GEMINI_API_KEY in the Secrets panel in AI Studio."
+        if (apiKey == null) {
+            _showApiKeyDialog.value = true
             return
         }
 
@@ -297,8 +467,10 @@ class PartOutViewModel : ViewModel() {
                     "Vehicle: ${it.vehicleName}${if (!it.mileage.isNullOrBlank()) ", Mileage: ${it.mileage}" else ""}${if (!it.notes.isNullOrBlank()) ", Notes: ${it.notes}" else ""}"
                 }
 
-                // Single multimodal vision call with 30-second timeout handled internally
-                val result = RetrofitClient.analyzePart(apiKey, bitmap, _userContext.value, sessionDetails)
+                // Single multimodal vision call
+                val result = withContext(Dispatchers.IO) {
+                    RetrofitClient.analyzePart(apiKey, bitmap, _userContext.value, sessionDetails)
+                }
 
                 stopStatusRotation()
 
@@ -330,6 +502,7 @@ class PartOutViewModel : ViewModel() {
                     )
                     _scanHistory.value = listOf(newItem) + _scanHistory.value
                     _activeHistoryItem.value = newItem
+                    persist()
 
                     _currentScreen.value = PartOutScreen.RESULTS
                 } else {
@@ -341,8 +514,89 @@ class PartOutViewModel : ViewModel() {
 
             } catch (e: Exception) {
                 stopStatusRotation()
-                _errorMessage.value = "Couldn't read that one — try a clearer photo.\n(Error: ${e.localizedMessage})"
+                _errorMessage.value = e.localizedMessage ?: "Couldn't read that one — try a clearer photo."
                 _currentScreen.value = PartOutScreen.RESULTS // Show the result container which will trigger failure overlay
+            }
+        }
+    }
+
+    // --- AI Mechanic chat ---
+
+    fun setMechanicInput(text: String) {
+        _mechanicInput.value = text
+    }
+
+    fun setMechanicVehicle(vehicle: String) {
+        _mechanicVehicle.value = vehicle
+        repository.mechanicVehicle = vehicle
+    }
+
+    fun setMechanicAttachment(bitmap: Bitmap?) {
+        _mechanicAttachment.value = bitmap
+    }
+
+    fun clearMechanicChat() {
+        _mechanicMessages.value = emptyList()
+        persist()
+    }
+
+    // Jump from a scan result into the repair chat with the part pre-loaded
+    fun askMechanicAboutActivePart() {
+        val partName = _activeResponse.value?.partName
+        _mechanicAttachment.value = _capturedBitmap.value
+        _mechanicInput.value = if (partName != null) {
+            "Help me with this $partName — how do I check if it's bad, and how do I replace it?"
+        } else {
+            "Help me figure out what's wrong with this part."
+        }
+        _currentTab.value = PartOutTab.MECHANIC
+    }
+
+    fun sendMechanicMessage() {
+        if (_mechanicSending.value) return
+        val apiKey = effectiveApiKey()
+        if (apiKey == null) {
+            _showApiKeyDialog.value = true
+            return
+        }
+        val text = _mechanicInput.value.trim()
+        val attachment = _mechanicAttachment.value
+        if (text.isBlank() && attachment == null) return
+
+        val userMessage = MechanicMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = text,
+            bitmap = attachment
+        )
+        _mechanicMessages.value = _mechanicMessages.value + userMessage
+        _mechanicInput.value = ""
+        _mechanicAttachment.value = null
+        _mechanicSending.value = true
+
+        viewModelScope.launch {
+            try {
+                val history = _mechanicMessages.value.filter { !it.isError }
+                val vehicle = _mechanicVehicle.value.takeIf { it.isNotBlank() }
+                val reply = withContext(Dispatchers.IO) {
+                    RetrofitClient.mechanicChat(apiKey, history, vehicle)
+                }
+                _mechanicMessages.value = _mechanicMessages.value + MechanicMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "model",
+                    text = reply
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _mechanicMessages.value = _mechanicMessages.value + MechanicMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "model",
+                    text = e.localizedMessage ?: "Something went wrong. Try sending that again.",
+                    isError = true
+                )
+            } finally {
+                _mechanicSending.value = false
+                persist()
             }
         }
     }
@@ -404,6 +658,7 @@ class PartOutViewModel : ViewModel() {
         _scanHistory.value = _scanHistory.value.map { item ->
             if (item.id == currentItem.id) updatedItem else item
         }
+        persist()
     }
 
     fun navigateToScreen(screen: PartOutScreen) {

@@ -49,11 +49,12 @@ data class Listing(
     @Json(name = "condition_disclosure") val conditionDisclosure: String
 )
 
-// Session history item stored in-memory
+// Session history item (persisted to disk; bitmap cached in memory)
 data class ScanHistoryItem(
     val id: String,
     val timestamp: Long,
     val bitmap: Bitmap?,
+    val imagePath: String? = null,
     val response: PartScanResponse,
     val userContext: String?,
     
@@ -72,12 +73,57 @@ data class ScanHistoryItem(
 )
 
 // Part-Out Vehicle Session model
+@JsonClass(generateAdapter = true)
 data class PartOutSession(
     val id: String,
     val vehicleName: String, // Year Make Model Trim, e.g. "2011 Honda Accord EX-L V6"
     val mileage: String?,
     val notes: String?,
     val timestamp: Long
+)
+
+// A single turn in the AI Mechanic repair chat
+data class MechanicMessage(
+    val id: String,
+    val role: String, // "user" | "model"
+    val text: String,
+    val bitmap: Bitmap? = null,
+    val imagePath: String? = null,
+    val isError: Boolean = false
+)
+
+// --- Persistence DTOs (bitmaps are stored as JPEG files on disk, referenced by path) ---
+
+@JsonClass(generateAdapter = true)
+data class PersistedScan(
+    val id: String,
+    val timestamp: Long,
+    val imagePath: String?,
+    val response: PartScanResponse,
+    val userContext: String?,
+    val editedPrice: Double,
+    val editedTitle: String,
+    val editedDescription: String,
+    val editedConditionNotes: String,
+    val pulled: Boolean = false,
+    val listed: Boolean = false,
+    val sessionId: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PersistedChatMessage(
+    val id: String,
+    val role: String,
+    val text: String,
+    val imagePath: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class PersistedState(
+    val scans: List<PersistedScan> = emptyList(),
+    val sessions: List<PartOutSession> = emptyList(),
+    val activeSessionId: String? = null,
+    val chat: List<PersistedChatMessage> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)

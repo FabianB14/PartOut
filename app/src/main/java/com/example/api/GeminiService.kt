@@ -2,20 +2,23 @@ package com.example.api
 
 import android.graphics.Bitmap
 import android.util.Base64
+import com.example.data.MechanicMessage
 import com.example.data.PartScanResponse
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
+import retrofit2.http.Path
 import retrofit2.http.Query
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 // --- Gemini Request / Response Models ---
@@ -29,7 +32,8 @@ data class GenerateContentRequest(
 
 @JsonClass(generateAdapter = true)
 data class Content(
-    val parts: List<Part>
+    val parts: List<Part>,
+    val role: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -63,8 +67,9 @@ data class Candidate(
 // --- Retrofit API Service Interface ---
 
 interface GeminiApiService {
-    @POST("v1beta/models/gemini-3.5-flash:generateContent")
+    @POST("v1beta/models/{model}:generateContent")
     suspend fun generateContent(
+        @Path("model") model: String,
         @Query("key") apiKey: String,
         @Body request: GenerateContentRequest
     ): GenerateContentResponse
@@ -75,16 +80,19 @@ interface GeminiApiService {
 object RetrofitClient {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/"
 
+    // Stable, generally-available multimodal model.
+    private const val MODEL = "gemini-2.5-flash"
+
     private val moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
         .build()
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
         .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.BASIC
         })
         .build()
 
@@ -97,13 +105,45 @@ object RetrofitClient {
         retrofit.create(GeminiApiService::class.java)
     }
 
-    // Helper to compress and convert Bitmap to base64
-    fun Bitmap.toBase64(): String {
+    // Helper to downscale, compress, and convert a Bitmap to base64.
+    // Camera captures can be 12MP+; sending them raw makes requests slow and
+    // can exceed request size limits, so cap the longest edge.
+    fun Bitmap.toBase64(maxDimension: Int = 1280): String {
+        val scaled = if (width > maxDimension || height > maxDimension) {
+            val scale = maxDimension.toFloat() / maxOf(width, height)
+            Bitmap.createScaledBitmap(this, (width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), true)
+        } else this
         val outputStream = ByteArrayOutputStream()
-        // Compress with reasonable quality to limit payload size
-        compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-        val bytes = outputStream.toByteArray()
-        return Base64.encodeToString(bytes, Base64.NO_WRAP)
+        scaled.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+        if (scaled !== this) scaled.recycle()
+        return Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+    }
+
+    // Wraps a Gemini call and converts transport/HTTP failures into messages
+    // a person can act on instead of raw stack-trace text.
+    private suspend fun <T> callGemini(block: suspend () -> T): T {
+        try {
+            return block()
+        } catch (e: HttpException) {
+            val body = try { e.response()?.errorBody()?.string() ?: "" } catch (_: Exception) { "" }
+            val message = when {
+                e.code() == 400 && (body.contains("API_KEY_INVALID") || body.contains("API key not valid", ignoreCase = true)) ->
+                    "Your Gemini API key was rejected. Double-check the key (get a free one at aistudio.google.com/apikey) and re-enter it in Settings."
+                e.code() == 401 || e.code() == 403 ->
+                    "Your Gemini API key isn't authorized for this request. Re-check the key in Settings."
+                e.code() == 404 ->
+                    "The Gemini model is unavailable. Please update the app."
+                e.code() == 429 ->
+                    "You've hit the Gemini rate limit. Wait a minute and try again."
+                e.code() >= 500 ->
+                    "Gemini is temporarily overloaded. Try again in a moment."
+                else ->
+                    "Gemini request failed (HTTP ${e.code()}). Try again."
+            }
+            throw Exception(message)
+        } catch (e: IOException) {
+            throw Exception("Network error — check your internet connection and try again.")
+        }
     }
 
     // Direct Gemini Vision API Call
@@ -126,11 +166,11 @@ object RetrofitClient {
         }
 
         val prompt = """
-            Analyze the provided photo of an automotive part. 
+            Analyze the provided photo of an automotive part.
             $contextPrompt
-            
+
             Identify the part name, its category, guess unverified part numbers, evaluate conditions from the image, estimate Private Party price in USD (low, typical, high), determine the removal effort (grade and note), and generate a high-quality ready-to-post marketplace listing.
-            
+
             Respond strictly in valid JSON matching this exact schema:
             {
               "identified": true,
@@ -190,7 +230,7 @@ object RetrofitClient {
             )
         )
 
-        val response = service.generateContent(apiKey, request)
+        val response = callGemini { service.generateContent(MODEL, apiKey, request) }
         val rawText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw Exception("Empty response from Gemini API")
 
@@ -200,14 +240,14 @@ object RetrofitClient {
     // Defensive parsing of the JSON response, stripping markdown fences if any
     private fun parseDefensive(rawText: String): PartScanResponse {
         var cleanText = rawText.trim()
-        
+
         // Strip leading markdown block
         if (cleanText.startsWith("```json")) {
             cleanText = cleanText.substring(7)
         } else if (cleanText.startsWith("```")) {
             cleanText = cleanText.substring(3)
         }
-        
+
         // Strip trailing markdown block
         if (cleanText.endsWith("```")) {
             cleanText = cleanText.substring(0, cleanText.length - 3)
@@ -221,6 +261,67 @@ object RetrofitClient {
             e.printStackTrace()
             throw Exception("Failed to parse response: ${e.localizedMessage}")
         }
+    }
+
+    // Multi-turn repair chat. History is replayed each call so Gemini keeps
+    // conversational context; only the messages that carry a photo include
+    // image data.
+    suspend fun mechanicChat(
+        apiKey: String,
+        history: List<MechanicMessage>,
+        vehicle: String?
+    ): String {
+        val systemInstructions = buildString {
+            append(
+                """
+                You are a master automotive technician helping a vehicle owner diagnose and repair their own vehicle in a home garage.
+                """.trimIndent()
+            )
+            if (!vehicle.isNullOrBlank()) {
+                append("\nThe owner's vehicle: $vehicle. Anchor all diagnosis, part names, fluid specs, and procedures to this exact vehicle whenever possible.")
+            }
+            append(
+                """
+
+                How to respond:
+                - When they describe a symptom, give the most likely causes ranked by probability for their vehicle, and for each: how to test or confirm it cheaply before buying parts.
+                - When walking through a repair, give clear numbered steps, the tools and socket sizes needed, parts to buy (with common part names), rough time, and difficulty.
+                - If a photo is provided, examine it closely and reference what you actually see.
+                - Ask a short clarifying question when key info is missing (mileage, when it happens, sounds, recent work).
+                - Include safety warnings when the job involves jack stands, fuel, brakes, airbags, cooling system pressure, or battery.
+                - Be concise and practical. Use plain text only: no markdown symbols like ** or #, use plain numbered lists (1., 2., 3.) and short paragraphs.
+                """.trimIndent()
+            )
+        }
+
+        // Cap replayed history to keep request size reasonable.
+        val turns = history.takeLast(16)
+        val contents = turns.map { msg ->
+            val parts = mutableListOf<Part>()
+            if (msg.text.isNotBlank()) parts.add(Part(text = msg.text))
+            msg.bitmap?.let { parts.add(Part(inlineData = InlineData(mimeType = "image/jpeg", data = it.toBase64(1024)))) }
+            if (parts.isEmpty()) parts.add(Part(text = ""))
+            Content(parts = parts, role = if (msg.role == "user") "user" else "model")
+        }
+
+        val request = GenerateContentRequest(
+            contents = contents,
+            generationConfig = GenerationConfig(
+                responseMimeType = null,
+                temperature = 0.6f
+            ),
+            systemInstruction = Content(
+                parts = listOf(Part(text = systemInstructions))
+            )
+        )
+
+        val response = callGemini { service.generateContent(MODEL, apiKey, request) }
+        val text = response.candidates?.firstOrNull()?.content?.parts
+            ?.mapNotNull { it.text }
+            ?.joinToString("")
+            ?.trim()
+        if (text.isNullOrBlank()) throw Exception("Empty response from Gemini API")
+        return text
     }
 
     suspend fun getPullGuide(
@@ -299,7 +400,7 @@ object RetrofitClient {
             )
         )
 
-        val response = service.generateContent(apiKey, request)
+        val response = callGemini { service.generateContent(MODEL, apiKey, request) }
         val rawText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw Exception("Empty response from Gemini API for Pull Guide")
 
