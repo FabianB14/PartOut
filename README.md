@@ -23,7 +23,9 @@ Open that URL on any phone or tablet and install it like an app:
 
 It launches full-screen from your home screen like a native app, keeps your scan history and chat on-device, and works with the same free Gemini API key (it asks on first launch).
 
-> First-time setup: GitHub Pages must be enabled once — the included workflow (`.github/workflows/pages.yml`) does this automatically on push. If the site 404s, check the repo's **Actions** tab for the "Deploy PWA to GitHub Pages" run, and make sure **Settings → Pages → Source** is set to *GitHub Actions*.
+> **One-time setup (repo owner):** go to **Settings → Pages**, set **Source** to *Deploy from a branch*, pick branch **`gh-pages`** and folder **`/ (root)`**, and save. The site goes live at the URL above a minute later. The `gh-pages` branch already contains the built site.
+>
+> There's also an Actions workflow (`.github/workflows/pages.yml`) that can auto-deploy `web/` on every push instead — but GitHub is currently refusing to start *any* Actions runs on this repo (`startup_failure` even for a trivial workflow, which usually means the account needs verification — open the failed run in the **Actions** tab to see GitHub's explanation). Until that's resolved, use the branch method above; to refresh the site later, copy `web/` onto the `gh-pages` branch again.
 
 ## Run the native Android app
 
