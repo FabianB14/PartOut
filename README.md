@@ -12,7 +12,7 @@ Point your camera at a car part and let AI do the rest.
 
 ## 📱 Use it on your phone right now (no Android Studio needed)
 
-PartOut also ships as a web app (PWA) in [`web/`](web/), auto-deployed to GitHub Pages:
+PartOut also ships as a web app (PWA) in [`docs/`](docs/), auto-deployed to GitHub Pages:
 
 **https://fabianb14.github.io/PartOut/**
 
@@ -23,9 +23,9 @@ Open that URL on any phone or tablet and install it like an app:
 
 It launches full-screen from your home screen like a native app, keeps your scan history and chat on-device, and works with the same free Gemini API key (it asks on first launch).
 
-> **One-time setup (repo owner):** go to **Settings → Pages**, set **Source** to *Deploy from a branch*, pick branch **`gh-pages`** and folder **`/ (root)`**, and save. The site goes live at the URL above a minute later. The `gh-pages` branch already contains the built site.
+> **One-time setup (repo owner):** go to **Settings → Pages**, set **Source** to *Deploy from a branch*, pick branch **`main`** and folder **`/docs`**, and save. The site goes live at the URL above a minute or two later. To update the site afterwards, just edit the files in `docs/` on `main`.
 >
-> There's also an Actions workflow (`.github/workflows/pages.yml`) that can auto-deploy `web/` on every push instead — but GitHub is currently refusing to start *any* Actions runs on this repo (`startup_failure` even for a trivial workflow, which usually means the account needs verification — open the failed run in the **Actions** tab to see GitHub's explanation). Until that's resolved, use the branch method above; to refresh the site later, copy `web/` onto the `gh-pages` branch again.
+> There's also an Actions workflow (`.github/workflows/pages.yml`) that can auto-deploy `docs/` on every push instead — but GitHub is currently refusing to start *any* Actions runs on this repo (`startup_failure` even for a trivial workflow, which usually means the account needs verification — open a failed run in the **Actions** tab to see GitHub's explanation). The branch method above works without Actions.
 
 ## Run the native Android app
 
